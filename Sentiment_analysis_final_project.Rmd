@@ -1,0 +1,279 @@
+---
+title: "R Notebook"
+output:
+  word_document: default
+  html_notebook: default
+---
+
+BIS 581 Fall 2022
+Name: Anirudh Srinivasan
+Hashtag: Tesla
+
+#load  libraries
+```{r message=FALSE, warning=FALSE}
+#load libraries
+library(tidytext)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(ggraph)
+library(igraph)
+library(reshape2)
+library(ggrepel)
+library(wordcloud)
+
+```
+
+#Loading data from the file
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+twitter_data <- readRDS("tweets.rds")
+
+```
+
+#knowing the data
+```{r include=FALSE}
+str(twitter_data)
+```
+
+#Seperating tweets related to tesla
+
+Identifying and filtering out the tweets that has tesla in it. People tag the company in the message section more than just in hash tag section. So analyzing the mgs section for the key word and saving it as a new dataset.
+
+```{r}
+Tesla_dataset <- twitter_data[grep("tesla",twitter_data$msg ,fixed=FALSE,ignore.case = TRUE),]
+```
+
+
+#Breaking into words
+
+Now we breakdown the sentence in the mgs column into words. Then we remove stop words for analysis.
+
+```{r message=FALSE, warning=FALSE}
+
+tesla_tweet_rows <- Tesla_dataset%>% mutate(sent_no = row_number()) 
+
+tesla_tweet_words <- tesla_tweet_rows %>% unnest_tokens(word,msg)
+
+tesla_tweet_words <- tesla_tweet_words %>% anti_join(stop_words)
+
+```
+
+
+
+-----------------------------------------------------------------------------------------------------------------------------
+
+
+#Q1: Ratio of retweets to tweets
+
+To identify the ratio, we calculate and divide the total amount of tweets by total number of retweets.
+
+```{r}
+
+ (Tesla_dataset[grep("^RT",Tesla_dataset$msg ,fixed=FALSE,ignore.case = FALSE),] %>% count() /Tesla_dataset %>% count()) *100
+
+```
+
+The retweets are around 1:2 in ratio to the total number of tweets.
+
+-----------------------------------------------------------------------------------------------------------------------------
+
+#Q2: PLOT top 15 meaningful positive, and negative words
+
+
+```{r message=FALSE, warning=FALSE}
+
+tesla_tweet_words %>% inner_join(get_sentiments("bing"), by = "word") %>%
+  count(word, sentiment, sort = TRUE) %>%
+  ungroup() %>%
+  group_by(sentiment) %>%
+  top_n(15) %>%
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(word, n, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  scale_fill_manual(values = c("red2", "green3")) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  ylim(0, 13000) +
+  labs(y = "Count", x = "Words") +
+  coord_flip() +
+  ggtitle("Tesla Twitter -  Sentiment analysis") +
+  theme_minimal()
+
+```
+
+-----------------------------------------------------------------------------------------------------------------------------
+
+#Q3: Word cloud of most frequent positive and negative words
+
+We use word cloud to display the most frequent positive and negative words from the dataset
+
+```{r message=FALSE, warning=FALSE}
+
+tesla_tweet_words %>% inner_join(get_sentiments("bing")) %>% count(word,sentiment,sort = TRUE) %>% acast(word~sentiment,value.var = "n",fill = 0) %>% comparison.cloud(colors = c("red2","green2"),scale=c(4,1),random.order = FALSE,max.words = 50)
+  
+```
+
+
+-----------------------------------------------------------------------------------------------------------------------------
+
+#Q4:Who are the top 10 users based on count of tweets
+
+Identifying the top 10 users based on their tweet count
+
+```{r}
+top_10_users <- Tesla_dataset %>% group_by(username) %>% summarise(Tweet_count=n()) %>% arrange(desc(Tweet_count)) %>% head(10)
+
+```
+
+```{r}
+
+print(top_10_users)
+
+```
+
+
+-----------------------------------------------------------------------------------------------------------------------------
+
+#Q5: How many of the tweets are retweets
+
+```{r message=FALSE, warning=FALSE}
+print(paste0("Total number retweets are: ",Tesla_dataset[grep("^RT",Tesla_dataset$msg ,fixed=FALSE,ignore.case = FALSE),] %>% count()))
+```
+
+-----------------------------------------------------------------------------------------------------------------------------
+
+#Q6: create a network diagram based on bigrams of negative words
+
+
+First we split the mgs sentence into combination of 2 words to create bigram.
+
+
+```{r}
+#split to bigram
+bigrams_in_tweet <- Tesla_dataset %>% unnest_tokens(bigram,msg,token="ngrams",n=2)
+
+```
+
+
+```{r}
+#Separate bigrams into 2 columns
+bigram_count <- bigrams_in_tweet %>% count(bigram,sort=TRUE) %>% separate(bigram,c("word1","word2"),sep=" ") 
+```
+
+
+Analysising each word with "afinn" sentiment and identify the sentiment value. Then adding the sentiment of both bigram words to finalize the bigram sentiment value.
+
+```{r}
+#Analyzing each word column with sentiment
+
+bigram_sentiment <- bigram_count %>% inner_join(get_sentiments("afinn"), by = c("word1"= "word"))
+
+bigram_sentiment <- bigram_sentiment %>% inner_join(get_sentiments("afinn"), by = c("word2"= "word"))
+
+bigram_sentiment$Cummulative_score <- bigram_sentiment$value.x + bigram_sentiment$value.y
+
+```
+
+Now filtering out just the negative bigrams which is the bigram with sentiment value less than 0.
+
+```{r}
+tesla_negative_bigrams <- bigram_sentiment %>% filter(Cummulative_score <0)
+```
+
+Creating a network diagram based on the negative bigrams
+```{r}
+#Network diagram
+
+tesla_negative_bigrams %>% filter(n>10) %>% graph_from_data_frame() %>% ggraph(layout="fr") + geom_edge_link(aes(edge_alpha = n, edge_width = n)) + geom_node_point(color="darkslategray4", size=3) + geom_node_text(aes(label=name), vjust=1.8, size=3) + labs(title="Tesla tweets analysis - Network diagram",subtitle="",x="",y="")
+
+```
+
+
+
+
+
+-----------------------------------------------------------------------------------------------------------------------------
+
+#Additional
+
+Identifying the original tweets and retweets for each tweet and saving the result in a new column
+```{r}
+
+Tesla_dataset$Retweets <- ifelse(grepl("^RT",Tesla_dataset$msg), "Retweet", "Original Tweet") 
+
+```
+
+Identifying the tweet ratio for top 10 users by tweet count
+
+```{r message=FALSE, warning=FALSE}
+
+User_tweet_ratio <- Tesla_dataset %>% inner_join(top_10_users, by ="username" ) %>% group_by(username,Retweets)  %>% summarise(Total_tweet=n())
+
+```
+
+
+```{r}
+#Creating bar graph using ggplot
+ggplot(data = User_tweet_ratio, aes(fill = Retweets, x = username ,y=Total_tweet)) +
+  geom_bar(stat = 'identity', position="dodge") + 
+  coord_flip()+
+  ggtitle("Top 10 users - tweet analysis") + 
+  xlab("User Name") +
+  ylab("Tweet Count") 
+```
+
+
+----------------------------------------------------------------------------------------------------------------------------
+
+#Identifying Positive and negative word count
+
+```{r}
+
+tesla_tweet_words %>% inner_join(get_sentiments("bing"), by = "word") %>%
+  count(sentiment, sort = TRUE) %>%
+  ungroup() %>%
+  group_by(sentiment) %>%
+  
+ ggplot(aes(x = sentiment ,y=n)) +
+  geom_bar(stat = 'identity', position="dodge") + 
+  ggtitle("Total Sentiment Count ") + 
+  xlab("Sentiments") +
+  ylab("Count") 
+
+```
+
+-----------------------------------------------------------------------------------------------------------------------------
+
+#Identifying the original tweet count and percentage
+
+```{r}
+
+ (Tesla_dataset %>% count() - Tesla_dataset[grep("^RT",Tesla_dataset$msg ,fixed=FALSE,ignore.case = FALSE),] %>% count())
+
+```
+
+Percentage
+```{r}
+ ((Tesla_dataset %>% count() - Tesla_dataset[grep("^RT",Tesla_dataset$msg ,fixed=FALSE,ignore.case = FALSE),] %>% count()) / Tesla_dataset %>% count()) *100
+
+```
+
+----------------------------------------------------------------------------------------------------------------------------
+
+
+```{r}
+
+Tesla_dataset$Ree <- sapply(Tesla_dataset$msg , FUN=function(x) {regmatches(x,regexec('^RT[[:space:]](.*?)[[:space:]]',x))[[1]][2]})
+
+```
+
+```{r}
+
+ Tesla_dataset %>% group_by(Ree) %>% summarise(Total=n()) %>% arrange(desc(Total))
+
+```
+
+```{r}
+Tesla_dataset[grep("fucking shit",Tesla_dataset$msg ,fixed=FALSE,ignore.case = FALSE),]
+```
+
