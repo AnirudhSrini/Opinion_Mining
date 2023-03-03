@@ -5,7 +5,6 @@ output:
   html_notebook: default
 ---
 
-BIS 581 Fall 2022
 Name: Anirudh Srinivasan
 Hashtag: Tesla
 
